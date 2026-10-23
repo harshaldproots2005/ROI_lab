@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ROI line</title>
+  <style>
+    body { font-family: Segoe UI, sans-serif; margin: 16px; background: #111; color: #eee; }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    p { max-width: 720px; line-height: 1.4; color: #ccc; }
+    button { background: #2a6; color: #fff; border: 0; padding: 8px 12px; cursor: pointer; }
+    .row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+    figure { margin: 0; }
+    figcaption { font-size: 13px; margin-bottom: 4px; color: #9cf; }
+    canvas, img.result { max-width: 720px; background: #000; border: 1px solid #444; image-rendering: pixelated; }
+    #status { min-height: 1.2em; color: #fc8; }
+  </style>
+</head>
+<body>
+  <h1>Pink line on one ROI</h1>
+  <p>
+    Choose the gray straightened rectangle, such as Halves/PH1/0001/gray.png.
+    The page draws the pink line on that rectangle. No coordinates.
+  </p>
+  <div>
+    <input id="file" type="file" accept="image/*" />
+    <button id="run" type="button">Draw pink line</button>
+  </div>
+  <div id="status"></div>
+  <div class="row">
+    <figure>
+      <figcaption>Gray rectangle</figcaption>
+      <canvas id="view" width="320" height="80"></canvas>
+    </figure>
+    <figure>
+      <figcaption>Pink line</figcaption>
+      <img id="out" class="result" alt="Pink line" />
+    </figure>
+  </div>
+  <script>
+    const fileInput = document.getElementById("file");
+    const canvas = document.getElementById("view");
+    const ctx = canvas.getContext("2d");
+    const statusEl = document.getElementById("status");
+    const outImg = document.getElementById("out");
+    let image = null;
+
+    function setStatus(text) { statusEl.textContent = text; }
+
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      const img = new Image();
+      img.onload = () => {
+        image = img;
+        const scale = Math.min(4, 720 / img.naturalWidth);
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        setStatus("Press Draw pink line.");
+      };
+      img.src = URL.createObjectURL(file);
+    });
+
+    document.getElementById("run").addEventListener("click", async () => {
+      if (!image) { setStatus("Choose the gray rectangle first."); return; }
+      setStatus("Drawing...");
+      const blob = await new Promise((resolve) => {
+        const c = document.createElement("canvas");
+        c.width = image.naturalWidth;
+        c.height = image.naturalHeight;
+        c.getContext("2d").drawImage(image, 0, 0);
+        c.toBlob(resolve, "image/png");
+      });
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      }
+      const res = await fetch("/api/line", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_base64: btoa(binary) })
+      });
+      const data = await res.json();
+      if (!res.ok) { setStatus(data.error || "Failed"); return; }
+      outImg.src = "data:image/png;base64," + data.image_png_base64;
+      setStatus(data.line_ends ? "Pink line drawn." : "No edge found in this rectangle.");
+    });
+  </script>
+</body>
+</html>
